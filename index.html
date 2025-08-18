@@ -60,6 +60,10 @@
   .r-diamond{background:linear-gradient(180deg,#9be7ff,#66d7ff); color:#071019;}
   .r-platinum{background:linear-gradient(180deg,#d0c8ff,#9b8cff); color:#071019;}
   .r-legendary{background:linear-gradient(180deg,#ffb3ff,#ff78d6); color:#071019;}
+  .r-obsidian{background:linear-gradient(180deg,#2b2b2b,#0b0b0b); color:#f0f0f0;}
+  .r-divine{background:linear-gradient(180deg,#fff6b7,#f6416c); color:#2b1d0e;}
+  .r-divine-max{background:linear-gradient(135deg,#ff00cc,#3333ff,#00ffcc,#ffcc00,#ff0066); color:#071019; background-size:400% 400%; animation:holo 8s ease infinite;}
+  @keyframes holo { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
   .small-badge{font-size:11px;padding:4px 8px;border-radius:999px;background:rgba(0,0,0,0.12);display:inline-block}
 </style>
 </head>
@@ -216,17 +220,30 @@ const CONFIG = {
     { key:'sapphire', value:5, pct:15, css:'r-sapphire' },
     { key:'diamond', value:6, pct:10, css:'r-diamond' },
     { key:'platinum', value:7, pct:5, css:'r-platinum' },
-    { key:'legendary', value:8, pct:3, css:'r-legendary' },
+    // Legendary tiers (spawn only t1 at 3%)
+    { key:'legendary_t1', value:8, pct:3, css:'r-legendary' },
+    { key:'legendary_t2', value:9, pct:0, css:'r-legendary' },
+    { key:'legendary_t3', value:10, pct:0, css:'r-legendary' },
+    // Obsidian (combo-only)
+    { key:'obsidian_t1', value:11, pct:0, css:'r-obsidian' },
+    { key:'obsidian_t2', value:12, pct:0, css:'r-obsidian' },
+    { key:'obsidian_t3', value:13, pct:0, css:'r-obsidian' },
+    // Divine (combo-only)
+    { key:'divine_t1', value:14, pct:0, css:'r-divine' },
+    { key:'divine_t2', value:15, pct:0, css:'r-divine' },
+    { key:'divine_t3', value:16, pct:0, css:'r-divine' },
+    // Divine max (holographic) — not combinable further
+    { key:'divine_max', value:17, pct:0, css:'r-divine-max', isMax:true },
   ],
   characters: [
-    { name:'Johan', allowedRarities:['legendary'] },
-    { name:'Tyler', allowedRarities:['platinum','legendary'] },
+    { name:'Johan', allowedRarities:['legendary_t1'] },
+    { name:'Tyler', allowedRarities:['platinum','legendary_t1'] },
     { name:'David', allowedRarities:null },
     { name:'Daniel', allowedRarities:null },
     { name:'Logan', allowedRarities:null },
-    { name:'Max', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary'] },
-    { name:'Lawrence', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary'] },
-    { name:'Brandt', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary'] },
+    { name:'Max', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary_t1'] },
+    { name:'Lawrence', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary_t1'] },
+    { name:'Brandt', allowedRarities:['gold','emerald','sapphire','diamond','platinum','legendary_t1'] },
   ],
   miningIntervalMs: 10000,
   maxCollectionSize: 6,
@@ -387,7 +404,9 @@ function weightedPickRarity(allowed = null){
 function pickRandomCharacter(){
   const c = CONFIG.characters[randInt(CONFIG.characters.length)];
   const allowed = c.allowedRarities ? c.allowedRarities : CONFIG.rarities.map(r=>r.key);
-  const r = weightedPickRarity(allowed);
+  // prevent combo-only tiers from spawning randomly
+  const spawnable = allowed.filter(k => !/^legendary_t[23]$/.test(k) && !/^obsidian_t[123]$/.test(k) && !/^divine_t[123]$/.test(k) && k!=='divine_max');
+  const r = weightedPickRarity(spawnable);
   return { name:c.name, rarityKey:r.key, rarityValue:r.value, css:r.css };
 }
 function usernameKey(n){ return n.trim().toUpperCase(); }
@@ -396,6 +415,19 @@ function genId(){ return Math.random().toString(36).slice(2,10) + Date.now().toS
 function rarityIndex(key){ return CONFIG.rarities.findIndex(r=>r.key===key); }
 function rarityKeyByIndex(i){ if(i<0 || i>=CONFIG.rarities.length) return CONFIG.rarities[0].key; return CONFIG.rarities[i].key; }
 function findCssForRarity(key){ const r = CONFIG.rarities.find(x=>x.key===key); return r ? r.css : 'r-bronze'; }
+function isMaxTier(key){ const r = CONFIG.rarities.find(x=>x.key===key); return !!(r && r.isMax); }
+function nextTierKey(currentKey){
+  const order = [
+    'bronze','silver','gold','emerald','sapphire','diamond','platinum',
+    'legendary_t1','legendary_t2','legendary_t3',
+    'obsidian_t1','obsidian_t2','obsidian_t3',
+    'divine_t1','divine_t2','divine_t3','divine_max'
+  ];
+  const idx = order.indexOf(currentKey);
+  if(idx<0) return currentKey;
+  if(idx >= order.length-1) return currentKey;
+  return order[idx+1];
+}
 
 /* ======================
    Score & combine logic
@@ -427,10 +459,9 @@ function autoCombineCollection(collection){
         const idxB = collection.findIndex(x=>x.id===b.id);
         if(idxB>=0) collection.splice(idxB,1);
         const parts = k.split('::'); const name = parts[0]; const rarity = parts[1];
-        const nextIndex = rarityIndex(rarity) + 1;
-        const newRarityKey = rarityKeyByIndex(nextIndex);
-        const newRarityVal = CONFIG.rarities.find(r=>r.key===newRarityKey).value;
-        collection.push({ id: genId(), name, rarityKey:newRarityKey, rarityValue:newRarityVal });
+        const nextKey = isMaxTier(rarity) ? rarity : nextTierKey(rarity);
+        const nextMeta = CONFIG.rarities.find(r=>r.key===nextKey) || CONFIG.rarities[0];
+        collection.push({ id: genId(), name, rarityKey: nextKey, rarityValue: nextMeta.value });
         changed = true;
         break;
       }
@@ -620,9 +651,10 @@ async function forceCombineSelected(){
   const bIdx = localColl.findIndex((c,i)=> c.name===card.name && c.rarityKey===card.rarityKey && c.id!==card.id);
   if(aIdx<0 || bIdx<0){ setCollectionMsg('Server mismatch when combining'); return; }
   if(bIdx>aIdx){ localColl.splice(bIdx,1); localColl.splice(aIdx,1); } else { localColl.splice(aIdx,1); localColl.splice(bIdx,1); }
-  const nextIndex = rarityIndex(card.rarityKey) + 1;
-  const newR = rarityKeyByIndex(nextIndex);
-  localColl.push({ id: genId(), name: card.name, rarityKey: newR, rarityValue: CONFIG.rarities.find(r=>r.key===newR).value });
+  if(isMaxTier(card.rarityKey)) { setCollectionMsg('Max tier cannot be combined'); return; }
+  const newR = nextTierKey(card.rarityKey);
+  const newMeta = CONFIG.rarities.find(r=>r.key===newR) || CONFIG.rarities[0];
+  localColl.push({ id: genId(), name: card.name, rarityKey: newR, rarityValue: newMeta.value });
   autoCombineCollection(localColl);
   serverUser.collection = localColl;
   serverUser.score = computeScoreForUser(serverUser);
