@@ -209,14 +209,14 @@
    ====================== */
 const CONFIG = {
   rarities: [
-    { key:'bronze', value:1, pct:40, css:'r-bronze' },
-    { key:'silver', value:2, pct:20, css:'r-silver' },
-    { key:'gold', value:3, pct:15, css:'r-gold' },
-    { key:'emerald', value:4, pct:10, css:'r-emerald' },
-    { key:'sapphire', value:5, pct:8, css:'r-sapphire' },
-    { key:'diamond', value:6, pct:4, css:'r-diamond' },
-    { key:'platinum', value:7, pct:2, css:'r-platinum' },
-    { key:'legendary', value:8, pct:1, css:'r-legendary' },
+    { key:'bronze', value:1, pct:24, css:'r-bronze' },
+    { key:'silver', value:2, pct:24, css:'r-silver' },
+    { key:'gold', value:3, pct:20, css:'r-gold' },
+    { key:'emerald', value:4, pct:0, css:'r-emerald' },
+    { key:'sapphire', value:5, pct:15, css:'r-sapphire' },
+    { key:'diamond', value:6, pct:10, css:'r-diamond' },
+    { key:'platinum', value:7, pct:5, css:'r-platinum' },
+    { key:'legendary', value:8, pct:3, css:'r-legendary' },
   ],
   characters: [
     { name:'Johan', allowedRarities:['legendary'] },
@@ -824,6 +824,7 @@ async function signInOrCreate(name, passkey){
   if(serverDB[key] && serverDB[key].passkey === passkey){
     currentUser = clone(serverDB[key]); currentUser.name = key;
     uiAfterSignIn(); renderCollection(); renderIncomingTrades();
+    try { localStorage.setItem('market_auth', JSON.stringify({ name: key, passkey })); } catch(e){}
     return { ok:true, existing:true };
   } else if(!serverDB[key]){
     const initial = {
@@ -842,6 +843,7 @@ async function signInOrCreate(name, passkey){
       currentUser = clone(initial); currentUser.name = key;
       serverDB[key] = clone(initial);
       uiAfterSignIn(); renderCollection(); renderIncomingTrades();
+      try { localStorage.setItem('market_auth', JSON.stringify({ name: key, passkey })); } catch(e){}
       return { ok:true, created:true };
     } else {
       return { ok:false, err:'save failed' };
@@ -909,6 +911,15 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('btnRunFetchTests').addEventListener('click', runFetchParseTests);
 
   await loadServerDB();
+  try {
+    const saved = JSON.parse(localStorage.getItem('market_auth') || 'null');
+    if(saved && saved.name && saved.passkey){
+      document.getElementById('inputName').value = saved.name;
+      document.getElementById('inputPass').value = saved.passkey;
+      const res = await signInOrCreate(saved.name, saved.passkey);
+      if(res && res.ok){ uiAfterSignIn(); renderCollection(); renderIncomingTrades(); }
+    }
+  } catch(e){}
   startMiningLoop();
   renderMine();
   updateTimerUI();
@@ -916,7 +927,12 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
   setInterval(async ()=>{
     await loadServerDB();
-    if(currentUser && serverDB[currentUser.name]) { currentUser = clone(serverDB[currentUser.name]); currentUser.name = currentUser.name || currentUser.name; uiAfterSignIn(); renderCollection(); renderIncomingTrades(); }
+    if(currentUser && currentUser.name && serverDB[currentUser.name]){
+      const nameKey = currentUser.name;
+      currentUser = clone(serverDB[nameKey]);
+      currentUser.name = nameKey;
+      uiAfterSignIn(); renderCollection(); renderIncomingTrades();
+    }
   }, 7000);
 });
 
