@@ -862,29 +862,50 @@ function downloadDB(){
 /* ======================
    Save / Load (user-level)
    ====================== */
-function saveGameToFile(){
-  if(!currentUser){ alert('Sign in to save your game'); return; }
-  const key = currentUser.name;
-  const userObj = serverDB[key] || currentUser;
-  const exportObj = {
-    name: key,
-    passkey: userObj.passkey,
-    collection: userObj.collection || [],
-    trades: userObj.trades || {},
-    score: computeScoreForUser(userObj),
-    createdAt: userObj.createdAt || Date.now()
-  };
-  const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
+async function saveGameToFile(){
+  await loadServerDB();
+  const blob = new Blob([JSON.stringify(serverDB, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `market_save_${key}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  const a = document.createElement('a'); a.href = url; a.download = 'market_db.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
 async function loadGameFromObject(obj){
   try {
+    await loadServerDB();
+    const looksLikeDb = obj && typeof obj === 'object' && !Array.isArray(obj) &&
+      Object.keys(obj).length > 0 &&
+      Object.values(obj).every(v => v && typeof v === 'object');
+
+    if(looksLikeDb && !obj.name){
+      const updates = {};
+      for(const k of Object.keys(obj)){
+        const u = obj[k] || {};
+        const user = {
+          passkey: u.passkey || (u.name ? u.name : ''),
+          collection: Array.isArray(u.collection) ? u.collection : [],
+          trades: u.trades || {},
+          createdAt: u.createdAt || Date.now()
+        };
+        user.score = computeScoreForUser(user);
+        updates[usernameKey(k)] = user;
+      }
+      const res = await saveUsersPayload({ updates });
+      if(res && res.ok){
+        await loadServerDB();
+        renderAdmin();
+        renderIncomingTrades();
+        renderCollection();
+        uiAfterSignIn();
+        alert('Database loaded');
+      } else {
+        alert('Failed to load database save');
+      }
+      return;
+    }
+
     if(!obj || !obj.name || !obj.passkey || !Array.isArray(obj.collection)){
       alert('Invalid save file'); return;
     }
-    await loadServerDB();
     const key = usernameKey(obj.name);
     const userToSave = {
       passkey: obj.passkey,
@@ -893,8 +914,8 @@ async function loadGameFromObject(obj){
       createdAt: obj.createdAt || Date.now()
     };
     userToSave.score = computeScoreForUser(userToSave);
-    const res = await saveUsersPayload({ updates: { [key]: userToSave } });
-    if(res && res.ok){
+    const res2 = await saveUsersPayload({ updates: { [key]: userToSave } });
+    if(res2 && res2.ok){
       await loadServerDB();
       currentUser = clone(serverDB[key]); currentUser.name = key;
       try { localStorage.setItem('market_auth', JSON.stringify({ name: key, passkey: userToSave.passkey })); } catch(e){}
@@ -960,11 +981,13 @@ function renderAdminAccountsList(){
     const score = computeScoreForUser(u);
     const div = document.createElement('div');
     div.style.padding='6px'; div.style.marginTop='6px'; div.style.borderRadius='8px'; div.style.background='rgba(255,255,255,0.02)';
-    div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
-      <div>
+    const cards = (u.collection||[]).map(c=>`${c.name} (${(c.rarityKey||'').toUpperCase()})`).join(', ');
+    div.innerHTML = `<div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
         <div style="font-weight:700">${k}</div>
-        <div class="small-muted">Cards: ${(u.collection||[]).length} • Score: ${score}</div>
+        <div class=\"small-muted\">Cards: ${(u.collection||[]).length} • Score: ${score}</div>
       </div>
+      <div class=\"small-muted\">${cards || 'No cards'}</div>
     </div>`;
     list.appendChild(div);
   });
