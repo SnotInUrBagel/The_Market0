@@ -243,7 +243,7 @@ const CONFIG = {
     { key:'divine Tier 2', value:15, pct:0, css:'r-divine' },
     { key:'divine Tier 3', value:16, pct:0, css:'r-divine' },
     // Divine max (holographic) — not combinable further
-    { key:'MAX TIER', value:17, pct:0, css:'r-divine-max', isMax:true },
+    { key:'divine_max', value:17, pct:0, css:'r-divine-max', isMax:true },
   ],
   characters: [
     { name:'Johan', allowedRarities:['legendary Tier 1'] },
@@ -692,7 +692,7 @@ async function forceCombineSelected(){
   const bIdx = localColl.findIndex((c,i)=> c.name===card.name && c.rarityKey===card.rarityKey && c.id!==card.id);
   if(aIdx<0 || bIdx<0){ setCollectionMsg('Server mismatch when combining'); return; }
   if(bIdx>aIdx){ localColl.splice(bIdx,1); localColl.splice(aIdx,1); } else { localColl.splice(aIdx,1); localColl.splice(bIdx,1); }
-  if(isMaxTier(card.rarityKey)) { setCollectionMsg('Max tier cannot be combined'); return; }
+  if(isMaxTier(card.rarityKey)) { setCollectionMsg('divine_max cannot be combined'); return; }
   const newR = nextTierKey(card.rarityKey);
   const newMeta = CONFIG.rarities.find(r=>r.key===newR) || CONFIG.rarities[0];
   localColl.push({ id: genId(), name: card.name, rarityKey: newR, rarityValue: newMeta.value });
