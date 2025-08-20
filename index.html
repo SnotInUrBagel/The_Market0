@@ -185,21 +185,33 @@
       <div style="font-weight:700">Sign In / Register</div>
       <input id="inputName" class="input" placeholder="Name (case-sensitive)">
       <input id="inputPass" class="input" placeholder="Passkey">
-      <button class="primary" id="btnSignIn">Sign In / Create</button>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:8px">
+        <button class="primary" id="btnSignIn">Sign In / Create</button>
+        <button class="ghost" id="btnSignOut">Sign Out</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px">
+        <button class="ghost" id="btnSaveGame">Save Game</button>
+        <button class="ghost" id="btnLoadGame">Load Game</button>
+        <input type="file" id="fileLoadGame" accept="application/json" style="display:none">
+      </div>
       <div style="font-size:12px;color:var(--muted);margin-top:8px">Database: /.netlify/functions/get-users &amp; /.netlify/functions/save-users (local fallback)</div>
     </div>
 
-    <div class="panel-compact">
-      <div style="font-weight:700">Config (admin-friendly)</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px">Spawn probabilities and allowed rarities are stored in the CONFIG object in the JS. Update there or in your DB for live changes.</div>
-      <button class="ghost" id="btnDownloadDB">Download DB (debug)</button>
-    </div>
-
-    <div class="panel-compact">
-      <div style="font-weight:700">Debug / Info</div>
-      <div id="debugOut" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-      <div style="margin-top:8px;display:flex;gap:8px">
-        <button class="ghost" id="btnRunFetchTests">Run Fetch/Parse Tests</button>
+    <div class="panel-compact" id="adminPanel">
+      <div style="font-weight:700">Admin</div>
+      <div id="adminSignedOut">
+        <input id="adminUser" class="input" placeholder="Admin user">
+        <input id="adminPass" class="input" placeholder="Admin password">
+        <button class="ghost" id="btnAdminSignIn">Admin Sign In</button>
+        <div class="small-muted">Use Gamemaster / asdfjkl;</div>
+      </div>
+      <div id="adminSignedIn" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">All Accounts</div>
+          <button class="ghost" id="btnAdminSignOut">Sign Out</button>
+        </div>
+        <div class="small-muted" id="adminSummary" style="margin-top:6px"></div>
+        <div id="adminAccountsList" style="margin-top:8px"></div>
       </div>
     </div>
   </div>
@@ -263,6 +275,7 @@ let mineIntervalRef = null;
 let mineCountdown = CONFIG.miningIntervalMs / 1000;
 let selectedSlotIndex = null;
 let targetTradeOffer = null;
+let adminSignedIn = false;
 
 /* ======================
    Helpers: safe fetch & parse (fixes "undefined" not valid JSON)
@@ -687,7 +700,8 @@ function renderTargetPlayerCards(name){
 
 function selectTargetCard(targetKey, idx){
   targetTradeOffer = { targetKey, targetIndex: idx };
-  document.getElementById('debugOut').innerText = `Selected target card ${targetKey} slot ${idx}`;
+  const out = document.getElementById('debugOut');
+  if(out){ out.innerText = `Selected target card ${targetKey} slot ${idx}`; }
 }
 
 async function proposeTrade(){
@@ -833,7 +847,7 @@ function flashMsg(elId, text, isError=false){
   setTimeout(()=>{ if(el && el.innerText === text) el.innerText = ''; }, 4500);
 }
 function setCollectionMsg(t){ const el = document.getElementById('collectionMsg'); el.innerText = t; setTimeout(()=>el.innerText='',3500); }
-function debug(t){ const out = document.getElementById('debugOut'); out.innerText = typeof t === 'string' ? t : JSON.stringify(t,null,2); }
+function debug(t){ const out = document.getElementById('debugOut'); if(!out) return; out.innerText = typeof t === 'string' ? t : JSON.stringify(t,null,2); }
 function uiAfterSignIn(){
   document.getElementById('displayName').innerText = currentUser ? currentUser.name : 'Not signed in';
   document.getElementById('displayPass').innerText = currentUser ? `Passkey: ${currentUser.passkey}` : '';
@@ -843,6 +857,144 @@ function downloadDB(){
   const blob = new Blob([JSON.stringify(serverDB, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = 'market_db.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+/* ======================
+   Save / Load (user-level)
+   ====================== */
+function saveGameToFile(){
+  if(!currentUser){ alert('Sign in to save your game'); return; }
+  const key = currentUser.name;
+  const userObj = serverDB[key] || currentUser;
+  const exportObj = {
+    name: key,
+    passkey: userObj.passkey,
+    collection: userObj.collection || [],
+    trades: userObj.trades || {},
+    score: computeScoreForUser(userObj),
+    createdAt: userObj.createdAt || Date.now()
+  };
+  const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `market_save_${key}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+async function loadGameFromObject(obj){
+  try {
+    if(!obj || !obj.name || !obj.passkey || !Array.isArray(obj.collection)){
+      alert('Invalid save file'); return;
+    }
+    await loadServerDB();
+    const key = usernameKey(obj.name);
+    const userToSave = {
+      passkey: obj.passkey,
+      collection: obj.collection,
+      trades: obj.trades || {},
+      createdAt: obj.createdAt || Date.now()
+    };
+    userToSave.score = computeScoreForUser(userToSave);
+    const res = await saveUsersPayload({ updates: { [key]: userToSave } });
+    if(res && res.ok){
+      await loadServerDB();
+      currentUser = clone(serverDB[key]); currentUser.name = key;
+      try { localStorage.setItem('market_auth', JSON.stringify({ name: key, passkey: userToSave.passkey })); } catch(e){}
+      uiAfterSignIn(); renderCollection(); renderIncomingTrades();
+      alert('Game loaded');
+    } else {
+      alert('Failed to load save');
+    }
+  } catch(e){
+    console.error('loadGameFromObject error', e);
+    alert('Error loading save');
+  }
+}
+
+function triggerLoadGame(){
+  const input = document.getElementById('fileLoadGame');
+  if(input) input.click();
+}
+
+function onLoadGameFileChange(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const obj = JSON.parse(reader.result);
+      await loadGameFromObject(obj);
+    } catch(err){
+      alert('Invalid JSON in save file');
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* ======================
+   Admin (Gamemaster)
+   ====================== */
+function renderAdmin(){
+  const signedOut = document.getElementById('adminSignedOut');
+  const signedIn = document.getElementById('adminSignedIn');
+  if(!signedOut || !signedIn) return;
+  if(adminSignedIn){
+    signedOut.style.display = 'none';
+    signedIn.style.display = 'block';
+    renderAdminAccountsList();
+  } else {
+    signedOut.style.display = 'block';
+    signedIn.style.display = 'none';
+  }
+}
+
+function renderAdminAccountsList(){
+  const list = document.getElementById('adminAccountsList');
+  const summary = document.getElementById('adminSummary');
+  if(!list || !summary) return;
+  list.innerHTML = '';
+  const keys = Object.keys(serverDB || {}).sort();
+  summary.innerText = `${keys.length} account(s)`;
+  keys.forEach(k=>{
+    const u = serverDB[k] || {};
+    const score = computeScoreForUser(u);
+    const div = document.createElement('div');
+    div.style.padding='6px'; div.style.marginTop='6px'; div.style.borderRadius='8px'; div.style.background='rgba(255,255,255,0.02)';
+    div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:700">${k}</div>
+        <div class="small-muted">Cards: ${(u.collection||[]).length} • Score: ${score}</div>
+      </div>
+    </div>`;
+    list.appendChild(div);
+  });
+}
+
+async function adminSignIn(){
+  const u = (document.getElementById('adminUser')||{}).value || '';
+  const p = (document.getElementById('adminPass')||{}).value || '';
+  if(u === 'Gamemaster' && p === 'asdfjkl;'){
+    adminSignedIn = true;
+    await loadServerDB();
+    renderAdmin();
+  } else {
+    alert('Invalid admin credentials');
+  }
+}
+
+function adminSignOut(){
+  adminSignedIn = false; renderAdmin();
+}
+
+/* ======================
+   Auth helpers
+   ====================== */
+function signOutUser(){
+  currentUser = null;
+  try { localStorage.removeItem('market_auth'); } catch(e){}
+  uiAfterSignIn();
+  renderCollection();
+  renderIncomingTrades();
 }
 
 /* ======================
@@ -937,10 +1089,20 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('tradeTarget').addEventListener('input', (e)=> renderTargetPlayerCards(e.target.value.trim().toUpperCase()));
   document.getElementById('btnCancelTrade').addEventListener('click', cancelPendingTrades);
 
-  document.getElementById('btnDownloadDB').addEventListener('click', downloadDB);
-  document.getElementById('btnRunFetchTests').addEventListener('click', runFetchParseTests);
+  // Sign out
+  document.getElementById('btnSignOut').addEventListener('click', signOutUser);
+
+  // Save / Load
+  document.getElementById('btnSaveGame').addEventListener('click', saveGameToFile);
+  document.getElementById('btnLoadGame').addEventListener('click', triggerLoadGame);
+  document.getElementById('fileLoadGame').addEventListener('change', onLoadGameFileChange);
+
+  // Admin
+  document.getElementById('btnAdminSignIn').addEventListener('click', adminSignIn);
+  document.getElementById('btnAdminSignOut').addEventListener('click', adminSignOut);
 
   await loadServerDB();
+  renderAdmin();
   try {
     const saved = JSON.parse(localStorage.getItem('market_auth') || 'null');
     if(saved && saved.name && saved.passkey){
