@@ -276,6 +276,7 @@ let mineCountdown = CONFIG.miningIntervalMs / 1000;
 let selectedSlotIndex = null;
 let targetTradeOffer = null;
 let adminSignedIn = false;
+let rarityBag = [];
 
 /* ======================
    Helpers: safe fetch & parse (fixes "undefined" not valid JSON)
@@ -408,17 +409,48 @@ async function saveUsersPayload(payload){
    ====================== */
 function randInt(max){ return Math.floor(Math.random()*max); }
 function weightedPickRarity(allowed = null){
+  // Deprecated by rarity bag; keep as fallback
   const pool = CONFIG.rarities.filter(r => !allowed || allowed.includes(r.key));
   const total = pool.reduce((s,p)=>s+p.pct,0);
   let pick = Math.random()*total;
   for(const r of pool){ pick -= r.pct; if(pick<=0) return r; }
   return pool[pool.length-1];
 }
+
+function refillRarityBag(){
+  // Build a bag proportional to pct values
+  const entries = [];
+  CONFIG.rarities.forEach(r=>{
+    const count = Math.max(0, Math.round(r.pct));
+    for(let i=0;i<count;i++){ entries.push(r.key); }
+  });
+  // Fallback: if entries is empty, include all once
+  if(entries.length === 0){ CONFIG.rarities.forEach(r=>entries.push(r.key)); }
+  // Shuffle
+  for(let i=entries.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [entries[i],entries[j]]=[entries[j],entries[i]]; }
+  rarityBag = entries;
+}
 function pickRandomCharacter(){
   const c = CONFIG.characters[randInt(CONFIG.characters.length)];
   const allowed = c.allowedRarities ? c.allowedRarities : CONFIG.rarities.map(r=>r.key);
-  const r = weightedPickRarity(allowed);
-  return { name:c.name, rarityKey:r.key, rarityValue:r.value, css:r.css };
+  // Ensure rarity bag is ready
+  if(!rarityBag || rarityBag.length === 0){ refillRarityBag(); }
+  // Draw next rarity from bag; if not allowed for this character, find next allowed in bag (with wrap), else refill
+  let pickedKey = null;
+  for(let attempts=0; attempts<rarityBag.length; attempts++){
+    const k = rarityBag.shift();
+    if(allowed.includes(k)){ pickedKey = k; break; }
+    // Not allowed for this character; push it back to end and continue
+    rarityBag.push(k);
+  }
+  if(!pickedKey){
+    // Could not find allowed rarity in current bag; refill and fallback to weighted pick within allowed
+    refillRarityBag();
+    const rFallback = weightedPickRarity(allowed);
+    return { name:c.name, rarityKey:rFallback.key, rarityValue:rFallback.value, css:rFallback.css };
+  }
+  const rMeta = CONFIG.rarities.find(r=>r.key===pickedKey) || CONFIG.rarities[0];
+  return { name:c.name, rarityKey:rMeta.key, rarityValue:rMeta.value, css:rMeta.css };
 }
 function usernameKey(n){ return n.trim().toUpperCase(); }
 function clone(o){ return JSON.parse(JSON.stringify(o)); }
@@ -1125,6 +1157,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('btnAdminSignOut').addEventListener('click', adminSignOut);
 
   await loadServerDB();
+  refillRarityBag();
   renderAdmin();
   try {
     const saved = JSON.parse(localStorage.getItem('market_auth') || 'null');
